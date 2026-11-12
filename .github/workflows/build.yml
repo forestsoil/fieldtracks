@@ -29,6 +29,7 @@ jobs:
           FT_KS_PASS: ${{ secrets.FT_KS_PASS }}
           FT_KEY_ALIAS: ${{ secrets.FT_KEY_ALIAS }}
           FT_KEY_PASS: ${{ secrets.FT_KEY_PASS }}
+          FT_SECRET: ${{ secrets.FT_SECRET }}
         run: gradle assembleRelease
       - run: cp app/build/outputs/apk/release/app-release.apk FieldTracks.apk
       - uses: actions/upload-artifact@v4

@@ -55,6 +55,8 @@ object TrackStore {
         if (loc.hasSpeed()) p.put("spd", r1(loc.speed.toDouble()))
         p.put("src", src)
         val pts = r.getJSONArray("points")
+        val n0 = pts.length()
+        if (n0 > 0 && pts.getJSONObject(n0 - 1).optString("t") == p.getString("t")) return Pair(f, n0) // same fix twice
         pts.put(p)
         val tmp = File(f.path + ".tmp")
         tmp.writeText(r.toString(1))

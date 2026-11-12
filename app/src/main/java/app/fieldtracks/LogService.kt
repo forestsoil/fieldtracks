@@ -103,6 +103,7 @@ class LogService : Service() {
         } catch (e: Throwable) {
             Status.err(this, "log: " + e.javaClass.simpleName + " " + e.message)
         }
+        try { if (Uploader.pending(this).isNotEmpty()) Uploader.kick(this) } catch (e: Throwable) {}
         try { wl?.release() } catch (e: Exception) {}
         busy = false
         stopForeground(STOP_FOREGROUND_REMOVE)

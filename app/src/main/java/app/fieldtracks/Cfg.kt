@@ -10,12 +10,14 @@ data class Cfg(
     val endMin: Int = 19 * 60,       // window end (inclusive)
     val intervalMin: Int = 5,        // 1-99
     val treeUri: String? = null,     // null = Documents/FieldTracks via MediaStore
-    val enabled: Boolean = true
+    val enabled: Boolean = true,
+    val email: String = "",
+    val project: String = "asha1"
 ) {
     fun save(c: Context) {
         val e = prefs(c).edit()
             .putInt("start", startMin).putInt("end", endMin)
-            .putInt("interval", intervalMin).putBoolean("on", enabled)
+            .putInt("interval", intervalMin).putBoolean("on", enabled).putString("email", email).putString("project", project)
         if (treeUri == null) e.remove("tree") else e.putString("tree", treeUri)
         e.apply()
     }
@@ -27,7 +29,8 @@ data class Cfg(
             return Cfg(
                 p.getInt("start", 7 * 60), p.getInt("end", 19 * 60),
                 p.getInt("interval", 5).coerceIn(1, 99),
-                p.getString("tree", null), p.getBoolean("on", true)
+                p.getString("tree", null), p.getBoolean("on", true), p.getString("email", "") ?: "",
+                p.getString("project", "asha1") ?: "asha1"
             )
         }
         fun hm(min: Int) = "%02d:%02d".format(min / 60, min % 60)
@@ -47,4 +50,6 @@ object Status {
     fun err(c: Context, m: String) =
         Cfg.prefs(c).edit().putString("err", stamp() + " " + m.take(300)).apply()
     fun clearErr(c: Context) = Cfg.prefs(c).edit().remove("err").apply()
+    fun upErr(c: Context, m: String) = Cfg.prefs(c).edit().putString("upErr", stamp() + " " + m.take(300)).apply()
+    fun upClear(c: Context) = Cfg.prefs(c).edit().remove("upErr").apply()
 }

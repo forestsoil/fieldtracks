@@ -13,6 +13,7 @@ import android.os.PowerManager
 import android.provider.Settings as AndroidSettings
 import android.text.InputType
 import android.view.Gravity
+import android.view.View
 import android.widget.*
 import java.time.Instant
 import java.time.ZoneId
@@ -26,6 +27,8 @@ class MainActivity : Activity() {
     private lateinit var startBtn: Button
     private lateinit var endBtn: Button
     private lateinit var intervalIn: EditText
+    private lateinit var emailIn: EditText
+    private lateinit var projSpin: Spinner
     private lateinit var onSwitch: Switch
     private val dt = DateTimeFormatter.ofPattern("d MMM HH:mm:ss")
 
@@ -49,6 +52,27 @@ class MainActivity : Activity() {
             inputType = InputType.TYPE_CLASS_NUMBER; setText(cfg.intervalMin.toString()); gravity = Gravity.END
             layoutParams = LinearLayout.LayoutParams(dp(90), LinearLayout.LayoutParams.WRAP_CONTENT)
         }
+        emailIn = EditText(this).apply {
+            hint = "Email (filled by ARR Suite link)"; setText(cfg.email)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+        }
+        projSpin = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
+                Projects.all.map { it.label + (if (it.enabled) "" else " (disabled)") })
+            setSelection(Projects.all.indexOfFirst { it.key == cfg.project }.coerceAtLeast(0))
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                    val pr = Projects.all[pos]
+                    if (!pr.enabled) {
+                        Toast.makeText(this@MainActivity, "Not enabled yet", Toast.LENGTH_SHORT).show()
+                        setSelection(Projects.all.indexOfFirst { it.key == cfg.project }.coerceAtLeast(0))
+                    } else if (pr.key != cfg.project) {
+                        cfg = cfg.copy(project = pr.key); cfg.save(this@MainActivity); Uploader.kick(this@MainActivity)
+                    }
+                }
+                override fun onNothingSelected(p: AdapterView<*>?) {}
+            }
+        }
         onSwitch = Switch(this).apply { text = "Logging on"; isChecked = cfg.enabled; textSize = 16f }
 
         val intervalRow = LinearLayout(this).apply {
@@ -67,21 +91,46 @@ class MainActivity : Activity() {
             addView(statusText)
             addView(btn("Grant permissions") { grantStep() })
             addView(btn("Battery: set unrestricted") { batteryOff() })
-            addView(tv("Logging window", 16f, true)); addView(timeRow); addView(intervalRow); addView(onSwitch)
+            addView(tv("Logging window", 16f, true)); addView(timeRow); addView(intervalRow); addView(tv("Project")); addView(projSpin); addView(emailIn); addView(onSwitch)
             addView(btn("Save settings") { save() })
             addView(tv("Save to", 16f, true)); addView(destText)
             addView(btn("Choose folder...") { chooseFolder() })
             addView(btn("Use default (Documents/FieldTracks)") { useDefault() })
+            addView(btn("Upload now") {
+                Cfg.prefs(this@MainActivity).edit().putBoolean("force", true).apply()
+                Uploader.kick(this@MainActivity)
+                Toast.makeText(this@MainActivity, "Upload queued", Toast.LENGTH_SHORT).show()
+            })
             addView(btn("Log a point now") { startForegroundService(Intent(this@MainActivity, LogService::class.java)) })
             addView(errText)
         }
         setContentView(ScrollView(this).apply { addView(col) })
         labels()
+        safe { handleLink(intent) }
+    }
+
+    override fun onNewIntent(i: Intent?) {
+        super.onNewIntent(i)
+        setIntent(i)
+        safe { handleLink(i) }
+    }
+
+    private fun handleLink(i: Intent?) {
+        val u = i?.data ?: return
+        if (u.scheme != "fieldtracks") return
+        val e = u.getQueryParameter("email")?.trim()?.lowercase()
+        val pj = u.getQueryParameter("project")?.trim()?.lowercase()
+        if (pj != null && Projects.all.any { it.key == pj && it.enabled }) cfg = cfg.copy(project = pj)
+        if (!e.isNullOrBlank()) {
+            cfg = cfg.copy(email = e); cfg.save(this); emailIn.setText(e)
+            Toast.makeText(this, "Linked: $e", Toast.LENGTH_LONG).show()
+            Uploader.kick(this)
+        }
     }
 
     override fun onResume() {
         super.onResume()
-        safe { cfg = Cfg.load(this); labels(); Scheduler.arm(this); refresh() }
+        safe { cfg = Cfg.load(this); labels(); Scheduler.arm(this); Uploader.kick(this); refresh() }
     }
 
     private fun safe(f: () -> Unit) {
@@ -103,7 +152,7 @@ class MainActivity : Activity() {
         val iv = (intervalIn.text.toString().toIntOrNull() ?: 5).coerceIn(1, 99)
         intervalIn.setText(iv.toString())
         if (cfg.endMin <= cfg.startMin) { Toast.makeText(this, "End must be after start", Toast.LENGTH_LONG).show(); return }
-        cfg = cfg.copy(intervalMin = iv, enabled = onSwitch.isChecked)
+        cfg = cfg.copy(intervalMin = iv, enabled = onSwitch.isChecked, email = emailIn.text.toString().trim().lowercase())
         cfg.save(this); Scheduler.arm(this); refresh()
     }
 
@@ -190,10 +239,14 @@ class MainActivity : Activity() {
         lines += "Next point: " + (if (!cfg.enabled) "off" else if (next > 0) t(next) else "-")
         val last = p.getLong("lastTs", 0L)
         lines += "Last point: " + (if (last > 0) t(last) else "-") + "   today: " + TrackStore.todayCount(this)
+        val upTs = p.getLong("upTs", 0L)
+        lines += "Upload: " + (if (!Uploader.configured(this)) "not configured in this build"
+            else if (cfg.email.isBlank()) "email not set"
+            else "last ok " + (if (upTs > 0) t(upTs) else "-") + ", pending " + Uploader.pending(this).size)
         lines += "No-fix misses: " + p.getInt("misses", 0)
         statusText.text = lines.joinToString("\n")
         destText.text = (cfg.treeUri?.let { Uri.parse(it).lastPathSegment } ?: "Documents/FieldTracks/ (default)") +
             "\nfieldtracks_yyyymmdd.json"
-        errText.text = p.getString("err", null)?.let { "Last error: $it" } ?: ""
+        errText.text = listOfNotNull(p.getString("err", null), p.getString("upErr", null)).joinToString("\n") { "Last error: $it" }
     }
 }

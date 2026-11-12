@@ -5,6 +5,7 @@ plugins {
 // Stable signing (so updates install over old versions): set FT_KEYSTORE, FT_KS_PASS, FT_KEY_ALIAS, FT_KEY_PASS.
 // Without them the build falls back to the debug key (fine for first install; updates need uninstall).
 val ftKs: String? = System.getenv("FT_KEYSTORE")
+val ftSecret: String = System.getenv("FT_SECRET") ?: ""
 android {
     namespace = "app.fieldtracks"
     compileSdk = 34
@@ -12,9 +13,11 @@ android {
         applicationId = "app.fieldtracks"
         minSdk = 30
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
+        buildConfigField("String", "SECRET", "\"" + ftSecret + "\"")
     }
+    buildFeatures { buildConfig = true }
     signingConfigs {
         if (ftKs != null) create("ft") {
             storeFile = file(requireNotNull(ftKs))

@@ -29,6 +29,16 @@ object Plan {
         return after + 24 * 60 * MIN
     }
 
+    /** Next upload moment: one minute after window end, each day. */
+    fun nextUpload(s: Cfg, after: Long, zone: ZoneId = ZoneId.systemDefault()): Long {
+        val d0 = Instant.ofEpochMilli(after).atZone(zone).toLocalDate()
+        for (i in 0..2) {
+            val t = d0.plusDays(i.toLong()).atStartOfDay(zone).plusMinutes(s.endMin + 1L).toInstant().toEpochMilli()
+            if (t > after) return t
+        }
+        return after + 24 * MIN * 60
+    }
+
     fun inWindow(s: Cfg, t: Long, zone: ZoneId = ZoneId.systemDefault()): Boolean {
         val z = Instant.ofEpochMilli(t).atZone(zone)
         val m = z.hour * 60 + z.minute
@@ -45,6 +55,17 @@ object Scheduler {
         )
     }
 
+    private fun upPi(c: Context): PendingIntent = PendingIntent.getBroadcast(
+        c, 2, Intent(c, UploadAlarmReceiver::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+
+    fun armUpload(c: Context, s: Cfg, after: Long = System.currentTimeMillis()) {
+        val am = c.getSystemService(AlarmManager::class.java)
+        am.cancel(upPi(c))
+        if (!Uploader.configured(c)) return
+        am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, Plan.nextUpload(s, after), upPi(c))
+    }
+
     fun canExact(c: Context): Boolean =
         Build.VERSION.SDK_INT < 31 || c.getSystemService(AlarmManager::class.java).canScheduleExactAlarms()
 
@@ -53,6 +74,7 @@ object Scheduler {
         val am = c.getSystemService(AlarmManager::class.java)
         am.cancel(pi(c, null))
         val s = Cfg.load(c)
+        armUpload(c, s, after)
         if (!s.enabled) { Cfg.prefs(c).edit().remove("nextAt").apply(); return }
         val at = Plan.next(s, after)
         try {
@@ -80,6 +102,17 @@ class AlarmReceiver : BroadcastReceiver() {
     }
 }
 
+class UploadAlarmReceiver : BroadcastReceiver() {
+    override fun onReceive(c: Context, i: Intent) {
+        Scheduler.armUpload(c, Cfg.load(c), System.currentTimeMillis() + 1000)
+        Uploader.kick(c)
+    }
+}
+
 class BootReceiver : BroadcastReceiver() {
-    override fun onReceive(c: Context, i: Intent) = Scheduler.arm(c)
+    override fun onReceive(c: Context, i: Intent) {
+        if (i.action == Intent.ACTION_BOOT_COMPLETED) Cfg.prefs(c).edit().putLong("lastBoot", System.currentTimeMillis()).apply()
+        Scheduler.arm(c)
+        Uploader.kick(c)
+    }
 }
