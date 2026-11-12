@@ -1,0 +1,43 @@
+name: Build FieldTracks APK
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: 8.9 }
+      - name: Decode signing key (optional secret)
+        env:
+          KS_B64: ${{ secrets.FT_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/ft.jks"
+            echo "FT_KEYSTORE=$RUNNER_TEMP/ft.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning::FT_KEYSTORE_B64 not set - signing with debug key; updates will need uninstall first"
+          fi
+      - name: Build
+        env:
+          FT_KS_PASS: ${{ secrets.FT_KS_PASS }}
+          FT_KEY_ALIAS: ${{ secrets.FT_KEY_ALIAS }}
+          FT_KEY_PASS: ${{ secrets.FT_KEY_PASS }}
+        run: gradle assembleRelease
+      - run: cp app/build/outputs/apk/release/app-release.apk FieldTracks.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FieldTracks-apk
+          path: FieldTracks.apk
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: fieldtracks-latest
+          name: FieldTracks (latest APK)
+          body: "Sideload build of this repo. Download FieldTracks.apk on the phone and install."
+          files: FieldTracks.apk
